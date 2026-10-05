@@ -4,17 +4,17 @@
 # The result is a thin shell wrapper around strata-server; `nix run` starts
 # the server in the foreground and leaves it running.
 #
-# All config is baked in at evaluation time -- no env vars, no config files.
-# Secrets (apiKeyFile) are read from disk at runtime so they never enter the
-# Nix store.
+# All fields are required -- no silent defaults. Set them explicitly in your
+# consumer flake. Secrets (apiKeyFile) are read from disk at runtime so they
+# never enter the Nix store.
 { pkgs, strata-server }:
 
-{ port       ? 8080
-, host       ? "127.0.0.1"
-, dataDir    ? "/var/lib/strata"
-, family     ? "qwen"
-, model      ? "IQ2_XS"
-, context    ? 32768
+{ port
+, host
+, dataDir
+, family
+, model
+, context
 , gpu        ? null
 , gpus       ? null
 , kv         ? null
