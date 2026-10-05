@@ -40,7 +40,7 @@ let
   };
 
   strata-server = pkgs.callPackage ./strata-server.nix {
-    inherit strata-src pythonEnv strata-engine;
+    inherit strata-src pythonEnv strata-engine llamaCppSrc;
   };
 
 in {

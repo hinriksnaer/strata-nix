@@ -9,6 +9,7 @@
 , strata-src
 , pythonEnv
 , strata-engine
+, llamaCppSrc
 }:
 
 stdenv.mkDerivation {
@@ -35,54 +36,70 @@ stdenv.mkDerivation {
     mkdir -p $out/share/strata/engine
     ln -s ${strata-engine}/bin/strata $out/share/strata/engine/strata
 
-    # Patch setup.py to handle MIG mode: nvidia-smi returns "[Insufficient Permissions]"
-    # for memory.total when MIG is enabled and the caller is unprivileged. We fall back
-    # to parsing the MIG slice size from "nvidia-smi -L" (e.g. "MIG 3g.71gb").
-    substituteInPlace $out/share/strata/setup.py \
-      --replace \
-        '            found.append({"index": int(idx), "name": name, "vram_gb": float(mem) / 1024.0, "arch": cc.replace(".", ""),
-                          "driver": drv})' \
-        '            vram_gb = _mig_vram_gb(name) if "[" in mem else float(mem) / 1024.0
-            found.append({"index": int(idx), "name": name, "vram_gb": vram_gb, "arch": cc.replace(".", ""),
-                          "driver": drv})'
+    # Apply all patches to setup.py via Python to avoid shell quoting issues.
+    # Patches:
+    #   1. get_llama_cpp() -> return pre-fetched Nix store path (no download)
+    #   2. pip_install()   -> no-op (packages pre-baked in pythonEnv)
+    #   3. gpus()          -> MIG support (_mig_vram_gb helper + fallback)
+    python3 - "$out/share/strata/setup.py" "${llamaCppSrc}" <<'PYEOF'
+import sys, re, textwrap
+from pathlib import Path
 
-    # Patch pip_install to skip actual pip invocation: all packages are pre-baked
-    # into the Nix pythonEnv and the Nix store is immutable (no stamp can be written).
-    substituteInPlace $out/share/strata/setup.py \
-      --replace \
-        'def pip_install(packages, what):
-    """pip install into .venv, skipped when the same list was installed before.  An install from before the pinned
-    requirements (#214) recorded bare names: those packages are kept as they are (nothing is reinstalled), and the
-    pinned dependencies it already has count as installed."""
-    stamp = Path(sys.prefix) / ".strata-pip.json"
-    have = json.loads(stamp.read_text()) if stamp.exists() else []
-    bare = {p.lower() for p in have if req_name(p) == p.lower()}
-    need = [p for p in packages if p not in have and req_name(p) not in bare
-            and not (bare and "==" in p and _installed(req_name(p)))]
-    if not need:
+setup_py = Path(sys.argv[1])
+llama_src = sys.argv[2]
+src = setup_py.read_text()
+
+# --- Patch 1: get_llama_cpp() ---
+old = re.search(
+    r"^def get_llama_cpp\(\):.*?^    return llama\n",
+    src, re.MULTILINE | re.DOTALL
+).group(0)
+new = textwrap.dedent(f'''\
+    def get_llama_cpp():
+        """Nix: return pre-fetched llama.cpp from the Nix store (no download needed)."""
+        return Path("{llama_src}")
+    ''')
+src = src.replace(old, new)
+
+# --- Patch 2: pip_install() -> no-op ---
+old = re.search(
+    r"^def pip_install\(packages, what\):.*?^    ok\(f\"\{what\} installed\"\)\n",
+    src, re.MULTILINE | re.DOTALL
+).group(0)
+new = textwrap.dedent('''\
+    def pip_install(packages, what):
+        """Nix: all packages are pre-installed in the pythonEnv; pip is not used."""
         ok(f"{what} already installed")
-        return
-    say(f"  Installing {what} ...")
-    run([sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", *need])
-    stamp.write_text(json.dumps(sorted(set(have) | set(need)), indent=0))
-    ok(f"{what} installed")' \
-        'def pip_install(packages, what):
-    """Nix: all packages are pre-installed in the pythonEnv; pip is not used."""
-    ok(f"{what} already installed")'
+    ''')
+src = src.replace(old, new)
 
-    # Prepend the MIG helper function before gpus()
-    substituteInPlace $out/share/strata/setup.py \
-      --replace \
-        'def gpus():' \
-        'def _mig_vram_gb(gpu_name):
-    """Fallback VRAM for MIG mode: parse slice size from nvidia-smi -L, e.g. MIG 3g.71gb -> 71.0.
-    Returns 0.0 if unparseable (caller will still see the GPU, just with 0 VRAM)."""
-    import re
-    s = out(["nvidia-smi", "-L"])
-    m = re.search(r"MIG\s+\S*?(\d+(?:\.\d+)?)gb", s, re.IGNORECASE)
-    return float(m.group(1)) if m else 0.0
+# --- Patch 3: MIG VRAM fallback in gpus() ---
+mig_helper = textwrap.dedent('''\
+    def _mig_vram_gb(gpu_name):
+        """Fallback VRAM for MIG mode: nvidia-smi returns [Insufficient Permissions]
+        for memory.total on unprivileged callers. Parse slice GiB from nvidia-smi -L."""
+        import re as _re
+        s = out(["nvidia-smi", "-L"])
+        m = _re.search(r"MIG\\s+\\S*?(\\d+(?:\\.\\d+)?)gb", s, _re.IGNORECASE)
+        return float(m.group(1)) if m else 0.0
 
-def gpus():'
+    ''')
+src = src.replace("def gpus():", mig_helper + "def gpus():", 1)
+
+old_append = (
+    '            found.append({"index": int(idx), "name": name, "vram_gb": float(mem) / 1024.0, "arch": cc.replace(".", ""),\n'
+    '                          "driver": drv})'
+)
+new_append = (
+    '            vram_gb = _mig_vram_gb(name) if "[" in mem else float(mem) / 1024.0\n'
+    '            found.append({"index": int(idx), "name": name, "vram_gb": vram_gb, "arch": cc.replace(".", ""),\n'
+    '                          "driver": drv})'
+)
+src = src.replace(old_append, new_append, 1)
+
+setup_py.write_text(src)
+print("setup.py patched successfully")
+PYEOF
 
     mkdir -p $out/bin
 
