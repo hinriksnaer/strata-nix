@@ -10,6 +10,11 @@ Patches applied:
                  read-only static files (data/, serve/, tools/) -> _NIX_STORE_ROOT
   2. get_llama_cpp()  -> return pre-fetched Nix store path (no download)
   3. pip_install()    -> no-op (packages pre-baked in pythonEnv)
+  4. gpus() MIG mode  -> _mig_vram_gb() helper for [Insufficient Permissions]
+             nvidia-smi returns [Insufficient Permissions] for memory.total on
+             unprivileged MIG callers; without this patch float() raises ValueError
+             and the GPU is silently dropped, causing setup.py to abort with
+             "no GPU found".
 
 Usage: python3 patch-setup-py.py <path-to-setup.py> <llama-cpp-store-path>
 """
@@ -95,6 +100,48 @@ src = src.replace(m.group(0), (
     "    \"\"\"Nix: all packages are pre-installed in the pythonEnv; pip is not used.\"\"\"\n"
     "    ok(f\"{what} already installed\")\n"
 ))
+
+# ---------------------------------------------------------------------------
+# Patch 4a: inject _mig_vram_gb() helper before gpus()
+#
+# Without this, nvidia-smi returns "[Insufficient Permissions]" for
+# memory.total on unprivileged MIG callers.  The except ValueError in gpus()
+# then silently drops the GPU from the found list, causing setup.py to abort
+# with "no GPU found".  The helper parses the slice size from nvidia-smi -L
+# which is readable without elevated privileges.
+#
+# Anchor: "def gpus():" (unique in the file).
+# ---------------------------------------------------------------------------
+MIG_HELPER = (
+    "def _mig_vram_gb(gpu_name):\n"
+    "    \"\"\"Fallback VRAM for MIG mode: nvidia-smi returns [Insufficient Permissions]\n"
+    "    for memory.total on unprivileged callers. Parse slice GiB from nvidia-smi -L.\"\"\"\n"
+    "    import re as _re\n"
+    "    s = out([\"nvidia-smi\", \"-L\"])\n"
+    "    m = _re.search(r\"MIG\\s+\\S*?(\\d+(?:\\.\\d+)?)gb\", s, _re.IGNORECASE)\n"
+    "    return float(m.group(1)) if m else 0.0\n"
+    "\n"
+    "\n"
+)
+assert "def gpus():" in src, "def gpus(): not found in setup.py"
+src = src.replace("def gpus():", MIG_HELPER + "def gpus():", 1)
+
+# ---------------------------------------------------------------------------
+# Patch 4b: use _mig_vram_gb() in found.append inside gpus()
+#
+# Anchor: exact found.append line (stable - it's the model GPU data structure).
+# ---------------------------------------------------------------------------
+OLD_APPEND = (
+    '            found.append({"index": int(idx), "name": name, "vram_gb": float(mem) / 1024.0, "arch": cc.replace(".", ""),\n'
+    '                          "driver": drv})'
+)
+NEW_APPEND = (
+    '            vram_gb = _mig_vram_gb(name) if "[" in mem else float(mem) / 1024.0\n'
+    '            found.append({"index": int(idx), "name": name, "vram_gb": vram_gb, "arch": cc.replace(".", ""),\n'
+    '                          "driver": drv})'
+)
+assert OLD_APPEND in src, "found.append() line not found in setup.py"
+src = src.replace(OLD_APPEND, NEW_APPEND, 1)
 
 setup_py.write_text(src)
 print("setup.py patched successfully")
