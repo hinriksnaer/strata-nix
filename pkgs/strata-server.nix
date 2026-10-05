@@ -18,6 +18,8 @@ stdenv.mkDerivation {
 
   src = strata-src;
 
+  nativeBuildInputs = [ pythonEnv ];
+
   dontBuild     = true;
   dontConfigure = true;
 
