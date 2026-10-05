@@ -46,6 +46,30 @@ stdenv.mkDerivation {
             found.append({"index": int(idx), "name": name, "vram_gb": vram_gb, "arch": cc.replace(".", ""),
                           "driver": drv})'
 
+    # Patch pip_install to skip actual pip invocation: all packages are pre-baked
+    # into the Nix pythonEnv and the Nix store is immutable (no stamp can be written).
+    substituteInPlace $out/share/strata/setup.py \
+      --replace \
+        'def pip_install(packages, what):
+    """pip install into .venv, skipped when the same list was installed before.  An install from before the pinned
+    requirements (#214) recorded bare names: those packages are kept as they are (nothing is reinstalled), and the
+    pinned dependencies it already has count as installed."""
+    stamp = Path(sys.prefix) / ".strata-pip.json"
+    have = json.loads(stamp.read_text()) if stamp.exists() else []
+    bare = {p.lower() for p in have if req_name(p) == p.lower()}
+    need = [p for p in packages if p not in have and req_name(p) not in bare
+            and not (bare and "==" in p and _installed(req_name(p)))]
+    if not need:
+        ok(f"{what} already installed")
+        return
+    say(f"  Installing {what} ...")
+    run([sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", *need])
+    stamp.write_text(json.dumps(sorted(set(have) | set(need)), indent=0))
+    ok(f"{what} installed")' \
+        'def pip_install(packages, what):
+    """Nix: all packages are pre-installed in the pythonEnv; pip is not used."""
+    ok(f"{what} already installed")'
+
     # Prepend the MIG helper function before gpus()
     substituteInPlace $out/share/strata/setup.py \
       --replace \
