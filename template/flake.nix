@@ -1,8 +1,18 @@
 {
-  inputs.strata-nix.url = "github:hinriksnaer/strata-nix";
+  inputs = {
+    strata-nix.url = "github:hinriksnaer/strata-nix";
 
-  outputs = { strata-nix, ... }: {
+    # Pin the Strata source to a specific commit for reproducibility.
+    strata-src = {
+      url   = "github:OWNER/Strata";   # replace with the real repo
+      flake = false;
+    };
+  };
+
+  outputs = { strata-nix, strata-src, ... }: {
     packages.x86_64-linux.default = strata-nix.lib.mkServer {
+      inherit strata-src;
+
       # ── Storage ──
       dataDir = "/mnt/podman_storage/YOUR_USERNAME/weights";
 

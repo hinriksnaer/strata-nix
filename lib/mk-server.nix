@@ -4,13 +4,17 @@
 # The result is a thin shell wrapper around strata-server; `nix run` starts
 # the server in the foreground and leaves it running.
 #
-# All fields except the optional ones are required -- no silent defaults.
+# strata-src is passed by the consumer flake so that strata-nix itself carries
+# no dependency on the upstream Strata repo. Consumers pin their own version.
+#
+# All required fields must be set explicitly -- no silent defaults.
 # Secrets (apiKeyFile) are read from disk at runtime so they never enter the
 # Nix store.
-{ pkgs, strata-src }:
+{ pkgs }:
 
 { # ── Required ──
-  port
+  strata-src       # the upstream Strata source tree (flake = false input)
+, port
 , host
 , dataDir
 , family
