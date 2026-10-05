@@ -43,7 +43,7 @@ stdenv.mkDerivation {
     cat > $out/bin/strata-server <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-export PATH="/usr/bin:/usr/local/bin:${PATH:-}"
+export PATH="/usr/bin:/usr/local/bin:$PATH"
 exec @python@/bin/python @out@/share/strata/setup.py "$@"
 EOF
     substituteInPlace $out/bin/strata-server \
@@ -55,7 +55,7 @@ EOF
     cat > $out/bin/strata-setup <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-export PATH="/usr/bin:/usr/local/bin:${PATH:-}"
+export PATH="/usr/bin:/usr/local/bin:$PATH"
 exec @python@/bin/python @out@/share/strata/setup.py --setup --yes --no-start "$@"
 EOF
     substituteInPlace $out/bin/strata-setup \
