@@ -1,7 +1,11 @@
 # C++/CUDA engine binary for Strata.
 # Fetches llama.cpp at the exact commit Strata pins and injects it into the
 # source tree so CMake's FetchContent is never invoked during the build.
-{ lib, stdenv, cmake, ninja, pkg-config
+#
+# Uses cudaPackages.backendStdenv rather than the default stdenv so the host
+# compiler is GCC 14, which is the maximum version supported by CUDA 12.x.
+# The default nixpkgs stdenv uses GCC 15 which nvcc rejects.
+{ lib, cmake, ninja, pkg-config
 , cudaPackages
 , strata-src
 , llamaCppSrc
@@ -10,6 +14,11 @@
   # Narrowing this to your card(s) significantly speeds up compilation.
 , cudaArch ? "75;86;89;90"
 }:
+
+let
+  # backendStdenv pins GCC to the version CUDA supports (GCC 14 for CUDA 12.x)
+  stdenv = cudaPackages.backendStdenv;
+in
 
 stdenv.mkDerivation {
   pname   = "strata-engine";
@@ -38,7 +47,7 @@ stdenv.mkDerivation {
     "-DCMAKE_CUDA_ARCHITECTURES=${cudaArch}"
   ];
 
-  CUDAHOSTCXX = "${stdenv.cc}/bin/cc";
+  CUDAHOSTCXX = "${stdenv.cc}/bin/c++";
 
   installPhase = ''
     runHook preInstall
