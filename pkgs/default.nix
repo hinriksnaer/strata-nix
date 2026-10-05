@@ -44,5 +44,5 @@ let
   };
 
 in {
-  inherit strata-engine strata-server pythonEnv cudaDeps;
+  inherit strata-engine strata-server;
 }

@@ -34,10 +34,9 @@ stdenv.mkDerivation {
     cp    setup.py         $out/share/strata/
     cp    requirements.txt $out/share/strata/
     cp    CMakeLists.txt   $out/share/strata/
-    [ -f chat.py ] && cp chat.py $out/share/strata/
 
     # Patch setup.py: redirect mutable state to STRATA_DATA_DIR, no-op pip,
-    # return pre-fetched llama.cpp, and add MIG VRAM fallback.
+    # return pre-fetched llama.cpp.
     python3 ${./patch-setup-py.py} "$out/share/strata/setup.py" "${llamaCppSrc}"
 
     mkdir -p $out/bin
@@ -91,51 +90,6 @@ EOF
       --replace '@share@'         "$out/share/strata" \
       --replace '@python@'        "${pythonEnv}"
     chmod +x $out/bin/strata-server
-
-    # strata-setup: download model only (--no-start), same engine initialisation.
-    cat > $out/bin/strata-setup <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-_data_dir=""
-_prev=""
-for _a in "$@"; do
-  [ "$_prev" = "--data-dir" ] && _data_dir="$_a"
-  _prev="$_a"
-done
-if [ -z "$_data_dir" ]; then _data_dir="$HOME/.local/share/strata"; fi
-export STRATA_DATA_DIR="$_data_dir"
-
-_engine_dir="$STRATA_DATA_DIR/engine"
-_engine_bin="@strata-engine@/bin/strata"
-_build_json='{"version":"0.1.39","archs":[90],"ptx":true,"backend":"cuda","source":"nix","lib_dirs":[]}'
-mkdir -p "$_engine_dir"
-if [ "$(readlink "$_engine_dir/strata" 2>/dev/null)" != "$_engine_bin" ]; then
-  ln -sf "$_engine_bin" "$_engine_dir/strata"
-fi
-if [ ! -f "$_engine_dir/BUILD.json" ]; then
-  printf '%s\n' "$_build_json" > "$_engine_dir/BUILD.json"
-fi
-
-export PATH="/usr/bin:/usr/local/bin:$PATH"
-exec @python@/bin/python @share@/setup.py --setup --yes --no-start "$@"
-EOF
-    substituteInPlace $out/bin/strata-setup \
-      --replace '@strata-engine@' "${strata-engine}" \
-      --replace '@share@'         "$out/share/strata" \
-      --replace '@python@'        "${pythonEnv}"
-    chmod +x $out/bin/strata-setup
-
-    # strata-chat: terminal chat client (no data-dir needed).
-    cat > $out/bin/strata-chat <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-exec @python@/bin/python @share@/chat.py "$@"
-EOF
-    substituteInPlace $out/bin/strata-chat \
-      --replace '@share@'  "$out/share/strata" \
-      --replace '@python@' "${pythonEnv}"
-    chmod +x $out/bin/strata-chat
 
     runHook postInstall
   '';
