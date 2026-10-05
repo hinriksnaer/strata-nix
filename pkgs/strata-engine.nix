@@ -10,9 +10,6 @@
 , strata-src
 , llamaCppSrc
 , cudaDeps
-  # Semicolon-separated CUDA arch list, e.g. "90" for H200 or "75;86;89;90".
-  # Narrowing this to your card(s) significantly speeds up compilation.
-, cudaArch ? "75;86;89;90"
 }:
 
 let
@@ -42,7 +39,8 @@ stdenv.mkDerivation {
     "-DSTRATA_ENABLE_CUDA=ON"
     "-DSTRATA_BUILD_TESTS=OFF"
     "-DSTRATA_GGML_DIR=${llamaCppSrc}"
-    "-DCMAKE_CUDA_ARCHITECTURES=${cudaArch}"
+    # sm_90 = H200. ptx:true in BUILD.json covers forward-compat at runtime.
+    "-DCMAKE_CUDA_ARCHITECTURES=90"
   ];
 
   CUDAHOSTCXX = "${stdenv.cc}/bin/c++";
