@@ -10,7 +10,7 @@
     };
   };
 
-  outputs = { nixpkgs, strata-src }:
+  outputs = { nixpkgs, strata-src, ... }:
     let
       system = "x86_64-linux";
 
