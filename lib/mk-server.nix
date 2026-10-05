@@ -4,17 +4,13 @@
 # The result is a thin shell wrapper around strata-server; `nix run` starts
 # the server in the foreground and leaves it running.
 #
-# strata-src is passed by the consumer flake so that strata-nix itself carries
-# no dependency on the upstream Strata repo. Consumers pin their own version.
-#
 # All required fields must be set explicitly -- no silent defaults.
 # Secrets (apiKeyFile) are read from disk at runtime so they never enter the
 # Nix store.
-{ pkgs }:
+{ pkgs, strata-src }:
 
 { # ── Required ──
-  strata-src       # the upstream Strata source tree (flake = false input)
-, port
+  port
 , host
 , dataDir
 , family
@@ -43,11 +39,9 @@ let
     inherit pkgs strata-src cudaArch;
   };
 
-  # Render an optional flag: null → omitted entirely.
   opt = flag: val:
     lib.optionals (val != null) [ "--${flag}" val ];
 
-  # API key: read from file at runtime so the secret never enters the store.
   apiKeyFragment = lib.optionalString (apiKeyFile != null) ''
     _api_key="$(cat ${lib.escapeShellArg apiKeyFile})"
     set -- "$@" --api-key "$_api_key"
