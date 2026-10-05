@@ -35,6 +35,31 @@ stdenv.mkDerivation {
     mkdir -p $out/share/strata/engine
     ln -s ${strata-engine}/bin/strata $out/share/strata/engine/strata
 
+    # Patch setup.py to handle MIG mode: nvidia-smi returns "[Insufficient Permissions]"
+    # for memory.total when MIG is enabled and the caller is unprivileged. We fall back
+    # to parsing the MIG slice size from "nvidia-smi -L" (e.g. "MIG 3g.71gb").
+    substituteInPlace $out/share/strata/setup.py \
+      --replace \
+        '            found.append({"index": int(idx), "name": name, "vram_gb": float(mem) / 1024.0, "arch": cc.replace(".", ""),
+                          "driver": drv})' \
+        '            vram_gb = _mig_vram_gb(name) if "[" in mem else float(mem) / 1024.0
+            found.append({"index": int(idx), "name": name, "vram_gb": vram_gb, "arch": cc.replace(".", ""),
+                          "driver": drv})'
+
+    # Prepend the MIG helper function before gpus()
+    substituteInPlace $out/share/strata/setup.py \
+      --replace \
+        'def gpus():' \
+        'def _mig_vram_gb(gpu_name):
+    """Fallback VRAM for MIG mode: parse slice size from nvidia-smi -L, e.g. MIG 3g.71gb -> 71.0.
+    Returns 0.0 if unparseable (caller will still see the GPU, just with 0 VRAM)."""
+    import re
+    s = out(["nvidia-smi", "-L"])
+    m = re.search(r"MIG\s+\S*?(\d+(?:\.\d+)?)gb", s, re.IGNORECASE)
+    return float(m.group(1)) if m else 0.0
+
+def gpus():'
+
     mkdir -p $out/bin
 
     # strata-server: start the server.
