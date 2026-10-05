@@ -33,17 +33,15 @@ stdenv.mkDerivation {
     cudaPackages.libcublas
   ];
 
-  # Provide llama.cpp so CMake uses it instead of FetchContent
-  preConfigure = ''
-    mkdir -p third_party/llama.cpp
-    cp -r ${llamaCppSrc}/* third_party/llama.cpp/
-    chmod -R u+w third_party/llama.cpp
-  '';
-
+  # Provide llama.cpp so CMake uses it instead of FetchContent.
+  # STRATA_GGML_DIR must be an absolute path -- CMake resolves relative paths
+  # in add_subdirectory() against the build dir, not the source dir.
+  # The Nix store path of llamaCppSrc is already absolute and read-only is fine
+  # since CMake only reads from it via add_subdirectory.
   cmakeFlags = [
     "-DSTRATA_ENABLE_CUDA=ON"
     "-DSTRATA_BUILD_TESTS=OFF"
-    "-DSTRATA_GGML_DIR=third_party/llama.cpp"
+    "-DSTRATA_GGML_DIR=${llamaCppSrc}"
     "-DCMAKE_CUDA_ARCHITECTURES=${cudaArch}"
   ];
 
