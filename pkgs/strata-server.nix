@@ -83,6 +83,12 @@ if [ ! -f "$_engine_dir/BUILD.json" ]; then
 fi
 
 export PATH="/usr/bin:/usr/local/bin:$PATH"
+
+# Raise the locked-memory limit so the engine can pin the embedding matrix
+# (~322 MiB for IQ3_S). The default ulimit -l of 8 MiB causes:
+#   "native embedding: cannot pin 322 MiB, nor place it in VRAM"
+ulimit -l unlimited 2>/dev/null || true
+
 exec @python@/bin/python @share@/setup.py "$@"
 EOF
     substituteInPlace $out/bin/strata-server \
