@@ -32,11 +32,22 @@ stdenv.mkDerivation {
     cp -r tools            $out/share/strata/
     cp    setup.py         $out/share/strata/
     cp    requirements.txt $out/share/strata/
+    cp    CMakeLists.txt   $out/share/strata/
     [ -f chat.py ] && cp chat.py $out/share/strata/
 
-    # Pre-install the engine binary where setup.py expects it
+    # Pre-install the engine binary where setup.py expects it.
+    # Also write BUILD.json so get_prebuilt() accepts it as a valid installed engine
+    # without attempting to download anything. Fields:
+    #   version  : must be >= MIN_ENGINE (0.1.39)
+    #   archs    : H200 is sm_90; ptx:true covers future archs
+    #   source   : "nix" (not "local", which would cause get_prebuilt to return None)
+    #   backend  : "cuda" (not "hip")
+    #   lib_dirs : empty; host libcuda.so is on LD_LIBRARY_PATH at runtime
     mkdir -p $out/share/strata/engine
     ln -s ${strata-engine}/bin/strata $out/share/strata/engine/strata
+    cat > $out/share/strata/engine/BUILD.json <<'EOF'
+{"version":"0.1.39","archs":[90],"ptx":true,"backend":"cuda","source":"nix","lib_dirs":[]}
+EOF
 
     # Apply all patches to setup.py via a Python script in the repo.
     # Patches:
