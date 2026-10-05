@@ -4,18 +4,26 @@
 # The result is a thin shell wrapper around strata-server; `nix run` starts
 # the server in the foreground and leaves it running.
 #
-# All fields are required -- no silent defaults. Set them explicitly in your
-# consumer flake. Secrets (apiKeyFile) are read from disk at runtime so they
-# never enter the Nix store.
-{ pkgs, strata-server }:
+# All fields except the optional ones are required -- no silent defaults.
+# Secrets (apiKeyFile) are read from disk at runtime so they never enter the
+# Nix store.
+{ pkgs, strata-src }:
 
-{ port
+{ # ── Required ──
+  port
 , host
 , dataDir
 , family
 , model
 , context
-, gpu        ? null
+, gpu
+
+  # ── CUDA build ──
+  # Semicolon-separated arch list. Narrow to your card(s) for faster builds.
+  # H200 = "90", A100 = "80", RTX 40xx = "89", RTX 30xx = "86", RTX 20xx = "75"
+, cudaArch ? "75;86;89;90"
+
+  # ── Optional runtime flags ──
 , gpus       ? null
 , kv         ? null
 , vision     ? "no"
@@ -26,6 +34,10 @@
 
 let
   lib = pkgs.lib;
+
+  strata = pkgs.callPackage ./pkgs/default.nix {
+    inherit pkgs strata-src cudaArch;
+  };
 
   # Render an optional flag: null → omitted entirely.
   opt = flag: val:
@@ -45,9 +57,9 @@ let
       "--host"     host
       "--port"     (toString port)
       "--low-ram"  lowRam
+      "--gpu"      gpu
       "--data-dir" dataDir
     ]
-    ++ opt "gpu"  gpu
     ++ opt "gpus" gpus
     ++ opt "kv"   kv
     ++ map lib.escapeShellArg extraArgs
@@ -56,7 +68,7 @@ let
 in pkgs.writeShellApplication {
   name = "strata-server";
 
-  runtimeInputs = [ strata-server ];
+  runtimeInputs = [ strata.strata-server ];
 
   text = ''
     mkdir -p ${lib.escapeShellArg dataDir}

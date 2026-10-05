@@ -25,15 +25,13 @@
         };
       };
 
+      # Default package set (fat binary, all supported arches)
       strata = pkgs.callPackage ./pkgs/default.nix { inherit pkgs strata-src; };
 
-      mkServer = import ./lib/mk-server.nix {
-        inherit pkgs;
-        strata-server = strata.strata-server;
-      };
+      mkServer = import ./lib/mk-server.nix { inherit pkgs strata-src; };
 
     in {
-      # ── Packages ──
+      # ── Raw packages (for advanced use / binary cache publishing) ──
       packages.${system} = {
         inherit (strata) strata-engine strata-server;
         default = strata.strata-server;
@@ -47,10 +45,14 @@
       #
       #   outputs = { strata-nix, ... }: {
       #     packages.x86_64-linux.default = strata-nix.lib.mkServer {
-      #       port    = 8080;
-      #       dataDir = "/var/lib/strata";
-      #       model   = "IQ2_XS";
-      #       gpu     = "0";
+      #       dataDir  = "/mnt/podman_storage/alice/weights";
+      #       gpu      = "0";
+      #       port     = 8080;
+      #       host     = "127.0.0.1";
+      #       family   = "qwen";
+      #       model    = "IQ2_XS";
+      #       context  = 32768;
+      #       cudaArch = "90";   # H200 -- narrows compile time significantly
       #     };
       #   };
       #
@@ -63,8 +65,8 @@
         path        = ./template;
         description = "strata-nix consumer flake";
         welcomeText = ''
-          Edit flake.nix to set your GPU, port, and data directory, then:
-            nix run .          # start the server (foreground)
+          Edit flake.nix -- set dataDir, gpu, and cudaArch for your machine -- then:
+            nix run .         # builds engine, downloads weights, starts server
             nix run . -- --help
         '';
       };

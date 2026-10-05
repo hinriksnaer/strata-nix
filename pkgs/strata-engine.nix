@@ -6,6 +6,9 @@
 , strata-src
 , llamaCppSrc
 , cudaDeps
+  # Semicolon-separated CUDA arch list, e.g. "90" for H200 or "75;86;89;90".
+  # Narrowing this to your card(s) significantly speeds up compilation.
+, cudaArch ? "75;86;89;90"
 }:
 
 stdenv.mkDerivation {
@@ -32,12 +35,9 @@ stdenv.mkDerivation {
     "-DSTRATA_ENABLE_CUDA=ON"
     "-DSTRATA_BUILD_TESTS=OFF"
     "-DSTRATA_GGML_DIR=third_party/llama.cpp"
-    # Fat binary: RTX 20 (75), 30 (86), 40 (89), 50 (120).
-    # Narrow this to your card for a faster build.
-    "-DCMAKE_CUDA_ARCHITECTURES=75;86;89;120"
+    "-DCMAKE_CUDA_ARCHITECTURES=${cudaArch}"
   ];
 
-  # Use stdenv's C compiler as the CUDA host compiler
   CUDAHOSTCXX = "${stdenv.cc}/bin/cc";
 
   installPhase = ''
