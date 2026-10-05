@@ -1,10 +1,11 @@
 # Python server wrapper for Strata.
-# Copies the Python source tree from upstream, symlinks the compiled engine,
-# and generates wrapper shell scripts with baked-in store paths.
+# Copies the Strata Python source tree from upstream and patches setup.py so
+# that all mutable state (engine pointer, run configs, logs) is redirected to
+# the user's --data-dir (STRATA_DATA_DIR) rather than the immutable Nix store.
 #
-# dataDir and all runtime flags are owned by the consumer (via lib.mkServer or
-# direct CLI args). These scripts are intentionally thin -- no defaults for
-# paths that belong to the user's environment.
+# Read-only static files (data/, serve/, tools/, CMakeLists.txt) remain in the
+# Nix store under _NIX_STORE_ROOT; setup.py is patched to use that variable for
+# those paths.
 { lib, stdenv
 , strata-src
 , pythonEnv
@@ -35,63 +36,102 @@ stdenv.mkDerivation {
     cp    CMakeLists.txt   $out/share/strata/
     [ -f chat.py ] && cp chat.py $out/share/strata/
 
-    # Pre-install the engine binary where setup.py expects it.
-    # Also write BUILD.json so get_prebuilt() accepts it as a valid installed engine
-    # without attempting to download anything. Fields:
-    #   version  : must be >= MIN_ENGINE (0.1.39)
-    #   archs    : H200 is sm_90; ptx:true covers future archs
-    #   source   : "nix" (not "local", which would cause get_prebuilt to return None)
-    #   backend  : "cuda" (not "hip")
-    #   lib_dirs : empty; host libcuda.so is on LD_LIBRARY_PATH at runtime
-    mkdir -p $out/share/strata/engine
-    ln -s ${strata-engine}/bin/strata $out/share/strata/engine/strata
-    cat > $out/share/strata/engine/BUILD.json <<'EOF'
-{"version":"0.1.39","archs":[90],"ptx":true,"backend":"cuda","source":"nix","lib_dirs":[]}
-EOF
-
-    # Apply all patches to setup.py via a Python script in the repo.
-    # Patches:
-    #   1. get_llama_cpp() -> return pre-fetched Nix store path (no download)
-    #   2. pip_install()   -> no-op (packages pre-baked in pythonEnv)
-    #   3. gpus()          -> MIG support (_mig_vram_gb helper + fallback)
+    # Patch setup.py: redirect mutable state to STRATA_DATA_DIR, no-op pip,
+    # return pre-fetched llama.cpp, and add MIG VRAM fallback.
     python3 ${./patch-setup-py.py} "$out/share/strata/setup.py" "${llamaCppSrc}"
 
     mkdir -p $out/bin
 
-    # strata-server: start the server.
-    # All flags (--data-dir, --port, etc.) are passed by the caller.
-    # Prepend common host tool paths so setup.py can find nvidia-smi, nvcc, etc.
+    # strata-server: run setup.py (downloads model if needed, then starts server).
+    #
+    # On first run (or after a Nix store update) the wrapper initialises the
+    # engine directory inside --data-dir so that setup.py's get_prebuilt() finds
+    # the pre-built binary without attempting a download:
+    #   $STRATA_DATA_DIR/engine/strata      -> symlink to Nix store binary
+    #   $STRATA_DATA_DIR/engine/BUILD.json  -> metadata accepted by get_prebuilt()
+    #
+    # BUILD.json fields:
+    #   version : must be >= MIN_ENGINE (0.1.39)
+    #   archs   : [90] = sm_90 (H200); ptx:true covers future architectures
+    #   source  : "nix" (not "local", which would make get_prebuilt return None)
+    #   backend : "cuda"
+    #   lib_dirs: [] (host libcuda.so is on LD_LIBRARY_PATH at runtime)
     cat > $out/bin/strata-server <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Parse --data-dir from the argument list; fall back to $HOME/.local/share/strata
+_data_dir=""
+_prev=""
+for _a in "$@"; do
+  [ "$_prev" = "--data-dir" ] && _data_dir="$_a"
+  _prev="$_a"
+done
+export STRATA_DATA_DIR="${_data_dir:-$HOME/.local/share/strata}"
+
+# Initialise the engine directory in the data dir on first run or after update.
+_engine_dir="$STRATA_DATA_DIR/engine"
+_engine_bin="@strata-engine@/bin/strata"
+_build_json='{"version":"0.1.39","archs":[90],"ptx":true,"backend":"cuda","source":"nix","lib_dirs":[]}'
+mkdir -p "$_engine_dir"
+# Refresh the symlink whenever the Nix store path changes (e.g. after flake update).
+if [ "$(readlink "$_engine_dir/strata" 2>/dev/null)" != "$_engine_bin" ]; then
+  ln -sf "$_engine_bin" "$_engine_dir/strata"
+fi
+if [ ! -f "$_engine_dir/BUILD.json" ]; then
+  printf '%s\n' "$_build_json" > "$_engine_dir/BUILD.json"
+fi
+
 export PATH="/usr/bin:/usr/local/bin:$PATH"
-exec @python@/bin/python @out@/share/strata/setup.py "$@"
+exec @python@/bin/python @share@/setup.py "$@"
 EOF
     substituteInPlace $out/bin/strata-server \
-      --replace '@out@'    "$out" \
-      --replace '@python@' "${pythonEnv}"
+      --replace '@strata-engine@' "${strata-engine}" \
+      --replace '@share@'         "$out/share/strata" \
+      --replace '@python@'        "${pythonEnv}"
     chmod +x $out/bin/strata-server
 
-    # strata-setup: download model data only, no server start.
+    # strata-setup: download model only (--no-start), same engine initialisation.
     cat > $out/bin/strata-setup <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+_data_dir=""
+_prev=""
+for _a in "$@"; do
+  [ "$_prev" = "--data-dir" ] && _data_dir="$_a"
+  _prev="$_a"
+done
+export STRATA_DATA_DIR="${_data_dir:-$HOME/.local/share/strata}"
+
+_engine_dir="$STRATA_DATA_DIR/engine"
+_engine_bin="@strata-engine@/bin/strata"
+_build_json='{"version":"0.1.39","archs":[90],"ptx":true,"backend":"cuda","source":"nix","lib_dirs":[]}'
+mkdir -p "$_engine_dir"
+if [ "$(readlink "$_engine_dir/strata" 2>/dev/null)" != "$_engine_bin" ]; then
+  ln -sf "$_engine_bin" "$_engine_dir/strata"
+fi
+if [ ! -f "$_engine_dir/BUILD.json" ]; then
+  printf '%s\n' "$_build_json" > "$_engine_dir/BUILD.json"
+fi
+
 export PATH="/usr/bin:/usr/local/bin:$PATH"
-exec @python@/bin/python @out@/share/strata/setup.py --setup --yes --no-start "$@"
+exec @python@/bin/python @share@/setup.py --setup --yes --no-start "$@"
 EOF
     substituteInPlace $out/bin/strata-setup \
-      --replace '@out@'    "$out" \
-      --replace '@python@' "${pythonEnv}"
+      --replace '@strata-engine@' "${strata-engine}" \
+      --replace '@share@'         "$out/share/strata" \
+      --replace '@python@'        "${pythonEnv}"
     chmod +x $out/bin/strata-setup
 
-    # strata-chat: terminal chat client.
+    # strata-chat: terminal chat client (no data-dir needed).
     cat > $out/bin/strata-chat <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-exec @python@/bin/python @out@/share/strata/chat.py "$@"
+exec @python@/bin/python @share@/chat.py "$@"
 EOF
     substituteInPlace $out/bin/strata-chat \
-      --replace '@out@'    "$out" \
+      --replace '@share@'  "$out/share/strata" \
       --replace '@python@' "${pythonEnv}"
     chmod +x $out/bin/strata-chat
 
