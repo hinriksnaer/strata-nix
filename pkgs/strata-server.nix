@@ -67,7 +67,8 @@ for _a in "$@"; do
   [ "$_prev" = "--data-dir" ] && _data_dir="$_a"
   _prev="$_a"
 done
-export STRATA_DATA_DIR="${_data_dir:-$HOME/.local/share/strata}"
+if [ -z "$_data_dir" ]; then _data_dir="$HOME/.local/share/strata"; fi
+export STRATA_DATA_DIR="$_data_dir"
 
 # Initialise the engine directory in the data dir on first run or after update.
 _engine_dir="$STRATA_DATA_DIR/engine"
@@ -102,7 +103,8 @@ for _a in "$@"; do
   [ "$_prev" = "--data-dir" ] && _data_dir="$_a"
   _prev="$_a"
 done
-export STRATA_DATA_DIR="${_data_dir:-$HOME/.local/share/strata}"
+if [ -z "$_data_dir" ]; then _data_dir="$HOME/.local/share/strata"; fi
+export STRATA_DATA_DIR="$_data_dir"
 
 _engine_dir="$STRATA_DATA_DIR/engine"
 _engine_bin="@strata-engine@/bin/strata"
